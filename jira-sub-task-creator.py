@@ -24,37 +24,42 @@ class SubTask:
         self.title = title
         self.description = description
 
-    def create(self):
-        description = self.description.replace('\n', '\\n').replace('** ', '* ')
-        body = f'''{{
-    "fields":
-    {{
-        "project":
-        {{
-            "key": "{JIRA_PROJECT}"
-        }},
-        "parent":
-        {{
-            "key": "{self.parent}"
-        }},
-        "summary": "{self.title}",
-        "description": "{description}",
-        "issuetype":
-        {{
-"self": "https://flow.sbb.ch/rest/api/2/issuetype/10003",
-            "id": "10003",
-            "description": "The sub-task of the issue",
-            "iconUrl": "https://flow.sbb.ch/secure/viewavatar?size=xsmall&avatarId=10316&avatarType=issuetype",
-            "name": "Sub-task",
-            "subtask": true,
-            "avatarId": 10316
-        }}
-    }}
-}}'''
+    def create(self) -> bool:
+        body = {
+            "fields":
+            {
+                "project":
+                {
+                    "key": JIRA_PROJECT
+                },
+                "parent":
+                {
+                    "key": self.parent
+                },
+                "summary": self.title,
+                "description": self.description.replace('**', '*'),
+                "issuetype":
+                {
+        "self": "https://flow.sbb.ch/rest/api/2/issuetype/10003",
+                    "id": "10003",
+                    "description": "The sub-task of the issue",
+                    "iconUrl": "https://flow.sbb.ch/secure/viewavatar?size=xsmall&avatarId=10316&avatarType=issuetype",
+                    "name": "Sub-task",
+                    "subtask": True,
+                    "avatarId": 10316
+                }
+            }
+        }
         print(f'[+] creating sub_task: {self.parent} - {self.title}')
-        # print(body)
-        response = requests.post(f"{JIRA_HOME}/rest/api/2/issue", data=body, headers=HEADERS)
-        print(f'[>] {response.text}')
+        response = requests.post(f"{JIRA_HOME}/rest/api/2/issue", json=body, headers=HEADERS)
+        success = False
+        if response.status_code == 201:
+            success = True
+        reason = response.text
+        if response.headers['Content-Type'].find('application/json') < 0:
+            reason = '{"error": "invalid cookie"}'
+            success = False
+        return {'success': success, 'reason': reason, 'sub_task': self }
 
 def create_sub_tasks_from_file(file_name):
     print(f'[+] parsing sub_tasks from file: {file_name}')
@@ -64,20 +69,22 @@ def create_sub_tasks_from_file(file_name):
         title = ''
         description = ''
         for line in f.readlines():
+            line = line.strip()
             if re.match('^#\s*', line):
                 if parent != '':
                     sub_tasks.append(SubTask(parent, title, description))
-                parent = re.sub('^#\s*', '', line[:-1])
+                parent = re.sub('^#\s*', '', line)
                 title = ''
                 description = ''
             if re.match('^\s*\*\s+', line):
                 if title != '':
                     sub_tasks.append(SubTask(parent, title, description))
-                title = re.sub('^\s*\*\s+', '', line[:-1])
+                title = re.sub('^\s*\*\s+', '', line)
                 description = ''
             if re.match('^\s*\*\*\s+', line):
-                description += re.sub('^\s*', '', line)
+                description += (re.sub('^\s*', '', line) + '\n')
         sub_tasks.append(SubTask(parent, title, description))
+    
     print(f'[+] {len(sub_tasks)} found')
     previous_parent = ''
     for sub_task in sub_tasks:
@@ -91,17 +98,39 @@ def create_sub_tasks_from_file(file_name):
 
     create_sub_tasks = input('[?] create those sub_tasks [y/N]: ')
     if create_sub_tasks.lower() == 'y':
-        print('[+] creating sub_tasks')
+        responses = []
         for sub_task in sub_tasks:
-            sub_task.create()
+            responses.append(sub_task.create())
+        print('__________________________\n')
+        print("RESPONSES")
+        print('__________________________\n')
+        for response in responses:
+            if response['success']:
+                sub_task = response['sub_task']
+                reason = response['reason']
+                print(f'✅ {reason}')
+                print(f'# {sub_task.parent}')
+                print(f'* {sub_task.title}')
+                print(f'{sub_task.description}')
+        has_error = False
+        for response in responses:
+            if not response['success']:
+                sub_task = response['sub_task']
+                reason = response['reason']
+                print(f'❌ {reason}')
+                print(f'# {sub_task.parent}')
+                print(f'* {sub_task.title}')
+                print(f'{sub_task.description}')
+                has_error = True
         print("[+] completed")
-        print('''.===================================================================.
-||                            ___                                  ||
-||                          .'   '.  Cheers!                       ||
-||                         /       \           oOoOo               ||
-||                        |         |       ,==|||||               ||
-||                         \       /       _|| |||||               ||
-||                          '.___.'    _.-'^|| |||||               ||
+        if not has_error:
+            print('''.===================================================================.
+||                            ____    No errors                    ||
+||                          .'    '.  Cheers!                      ||
+||                         /   |  | \          oOoOo               ||
+||                        |          |      ,==|||||               ||
+||                         \ '.___.'/      _|| |||||               ||
+||                          '.____.'   _.-'^|| |||||               ||
 ||                        __/_______.-'     '==HHHHH               ||
 ||                   _.-'` /                   """""               ||
 ||                .-'     /   oOoOo                                ||
@@ -117,7 +146,7 @@ def create_sub_tasks_from_file(file_name):
 ||                     /                                           ||
 ||         by royman  /_____                                       ||
 ||                                                                 ||
-'==================================================================='''')
+.===================================================================.''')
 
 
 if __name__ == '__main__':
